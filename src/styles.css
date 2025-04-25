@@ -172,6 +172,7 @@ h1 {
   text-align: right;
   min-width: 25px;
 }
+
 .editor-code:after {
   content: attr(data-highlight-language);
   top: 0;
@@ -494,4 +495,8 @@ i.exit-list {
 .toolbar select:focus {
   border-color: #66afe9;
   box-shadow: 0 0 0 1px rgba(102, 175, 233, .6);
+}
+
+mark {
+  background-color: transparent;
 }

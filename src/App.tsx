@@ -266,19 +266,19 @@ export default function App() {
   const [state, setState] = useState<boolean>(true);
   const [editor, setEditor] = useState<LexicalEditor | null>(null);
 
-  useEffect(() => {
-    if (editor) {
-      editor.update(
-        () => {
-          $convertFromMarkdownString(sampleMarkdown, TRANSFORMERS);
-        },
-        {
-          tag: "historic",
-          discrete: true,
-        }
-      );
-    }
-  }, [editor]);
+  // useEffect(() => {
+  //   if (editor) {
+  //     editor.update(
+  //       () => {
+  //         $convertFromMarkdownString(sampleMarkdown, TRANSFORMERS);
+  //       },
+  //       {
+  //         tag: "historic",
+  //         discrete: true,
+  //       }
+  //     );
+  //   }
+  // }, [editor]);
 
   const highlightText = (words: string[]) => {
     if (!editor) return;
@@ -290,8 +290,7 @@ export default function App() {
       () => {
         const root = $getRoot();
 
-        // Đầu tiên, xóa tất cả các highlight hiện tại
-        // Tìm tất cả các MarkNode với ID 'highlight' và thay thế chúng bằng TextNode thông thường
+        // Chỉ xóa highlight cũ, giữ lại các từ đã thay thế
         const removeExistingHighlights = (node: LexicalNode) => {
           if ($isMarkNode(node) && node.getIDs().includes("highlight")) {
             // Lấy nội dung của MarkNode
@@ -315,6 +314,12 @@ export default function App() {
         // Hàm đệ quy để duyệt qua tất cả các node, bao gồm cả cấu trúc lồng nhau
         const collectTextNodes = (node: LexicalNode) => {
           if ($isTextNode(node)) {
+            // Kiểm tra nếu node này đã được thay thế (nằm trong MarkNode với ID 'replaced')
+            const parent = node.getParent();
+            if ($isMarkNode(parent) && parent.getIDs().includes("replaced")) {
+              // Bỏ qua node này vì nó đã được thay thế
+              return;
+            }
             textNodes.push(node);
           } else if ($isElementNode(node)) {
             // Duyệt qua tất cả các node con
@@ -409,6 +414,145 @@ export default function App() {
     );
   };
 
+  const replaceText = (searchTexts: string[], replaceTexts: string[]) => {
+    if (!editor || searchTexts.length !== replaceTexts.length) return;
+
+    // Biến để theo dõi node highlight cuối cùng
+    let lastHighlightedNode: LexicalNode | null = null;
+
+    editor.update(
+      () => {
+        const root = $getRoot();
+
+        // Xóa tất cả các highlight hiện tại trước tiên
+        const removeExistingHighlights = (node: LexicalNode) => {
+          if ($isMarkNode(node) && (node.getIDs().includes("highlight"))) {
+            // Lấy nội dung của MarkNode
+            const text = node.getTextContent();
+            // Tạo TextNode mới không có highlight
+            const newTextNode = $createTextNode(text);
+            // Thay thế MarkNode bằng TextNode mới
+            node.replace(newTextNode);
+          } else if ($isElementNode(node)) {
+            // Duyệt qua tất cả các node con
+            node.getChildren().forEach(removeExistingHighlights);
+          }
+        };
+
+        // Bắt đầu xóa highlight từ root
+        root.getChildren().forEach(removeExistingHighlights);
+
+        // Thu thập tất cả các TextNode để tìm kiếm và thay thế
+        const textNodes: TextNode[] = [];
+
+        // Hàm đệ quy để duyệt qua tất cả các node, bao gồm cả cấu trúc lồng nhau
+        const collectTextNodes = (node: LexicalNode) => {
+          if ($isTextNode(node)) {
+            textNodes.push(node);
+          } else if ($isElementNode(node)) {
+            // Duyệt qua tất cả các node con
+            node.getChildren().forEach(collectTextNodes);
+          }
+        };
+
+        // Bắt đầu duyệt từ root
+        root.getChildren().forEach(collectTextNodes);
+
+        console.log(`Found ${textNodes.length} text nodes for replacement`);
+
+        // Process each text node
+        textNodes.forEach((textNode) => {
+          let text = textNode.getTextContent();
+          let hasChanges = false;
+          let newNodes: LexicalNode[] = [];
+          let lastIndex = 0;
+
+          // Kiểm tra từng cặp search/replace
+          for (let i = 0; i < searchTexts.length; i++) {
+            const searchText = searchTexts[i];
+            const replaceText = replaceTexts[i];
+            const regex = new RegExp(`\\b${searchText}\\b`, "gi");
+            
+            // Nếu text chứa từ cần tìm
+            if (regex.test(text)) {
+              hasChanges = true;
+              
+              // Reset regex để sử dụng lại từ đầu
+              regex.lastIndex = 0;
+              
+              // Biến tạm để xây dựng text mới
+              let tempText = text;
+              let tempLastIndex = 0;
+              let tempNewNodes: LexicalNode[] = [];
+              let match;
+
+              while ((match = regex.exec(tempText)) !== null) {
+                const start = match.index;
+                const end = start + searchText.length;
+
+                // Thêm text trước match
+                if (start > tempLastIndex) {
+                  tempNewNodes.push($createTextNode(tempText.slice(tempLastIndex, start)));
+                }
+
+                // Tạo node cho text đã thay đổi
+                const replacedNode = $createTextNode(replaceText);
+                
+                // Áp dụng style với màu xanh
+                replacedNode.setStyle("color: #0000FF; background-color: transparent; font-weight: bold;");
+
+                // Tạo MarkNode với ID "replaced" và bọc TextNode
+                const markNode = $createMarkNode(["replaced"]).setStyle("background-color: red;");
+                markNode.append(replacedNode);
+
+                // Thêm vào mảng node
+                tempNewNodes.push(markNode);
+
+                // Lưu lại node được highlight cuối cùng
+                lastHighlightedNode = markNode;
+
+                tempLastIndex = end;
+              }
+
+              // Thêm text còn lại
+              if (tempLastIndex < tempText.length) {
+                tempNewNodes.push($createTextNode(tempText.slice(tempLastIndex)));
+              }
+
+              // Cập nhật text và nodes
+              newNodes = tempNewNodes;
+              break; // Chỉ xử lý 1 lần thay thế
+            }
+          }
+
+          // Nếu có thay đổi, thay thế node hiện tại
+          if (hasChanges && newNodes.length > 0) {
+            textNode.replace(newNodes[0]);
+            for (let i = 1; i < newNodes.length; i++) {
+              newNodes[i - 1].insertAfter(newNodes[i]);
+            }
+          }
+        });
+      },
+      {
+        onUpdate: () => {
+          // Sau khi update hoàn tất, scroll đến node đã thay đổi cuối cùng
+          if (lastHighlightedNode) {
+            setTimeout(() => {
+              const domNode = editor.getElementByKey(
+                lastHighlightedNode!.getKey()
+              );
+              if (domNode) {
+                // Scroll đến phần tử với hiệu ứng mượt mà
+                domNode.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }, 100);
+          }
+        },
+      }
+    );
+  };
+
   return (
     <>
       <h1 style={{ textAlign: "center", margin: "20px 0" }}>
@@ -476,6 +620,17 @@ export default function App() {
         </button>
         <button onClick={() => highlightText(["Technical Writing"])}>
           Highlight Technical Writing
+        </button>
+
+        <button onClick={() => replaceText(["JavaScript"], ["TypeScript"])}>
+          Change JavaScript to TypeScript
+        </button>
+        <button onClick={() => replaceText(["Technical Writing"], ["Technically"])}>
+          Change Technical Writing to Technically
+        </button>
+
+        <button onClick={() => replaceText(["Technical Writing", "JavaScript"], ["Technically", "TypeScript"])}>
+          Change all
         </button>
       </div>
     </>

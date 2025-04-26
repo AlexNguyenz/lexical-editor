@@ -36,6 +36,8 @@ import {
   $setSelection,
   $isElementNode,
 } from "lexical";
+import { $generateNodesFromDOM } from "@lexical/html";
+import { $generateHtmlFromNodes } from "@lexical/html";
 import { HeadingNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
 import { LinkNode } from "@lexical/link";
@@ -54,8 +56,8 @@ import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
 import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
-import { useState, useEffect } from "react";
-import * as React from "react";
+import { useState, useEffect, useCallback } from "react";
+import RichTextDiffViewer from "./RichTextDiffViewer";
 
 const sampleMarkdown = `
 # [Your Full Name]
@@ -262,25 +264,76 @@ function GetEditorInstance({
   return null;
 }
 
+// Function to convert Lexical editor content to HTML
+const getHtmlContent = (editor: LexicalEditor): Promise<string> => {
+  return new Promise((resolve) => {
+    editor.update(() => {
+      const htmlString = $generateHtmlFromNodes(editor);
+      resolve(htmlString);
+    });
+  });
+};
+
 export default function App() {
   const [state, setState] = useState<boolean>(true);
   const [editor, setEditor] = useState<LexicalEditor | null>(null);
+  const [initialContent, setInitialContent] = useState<string>("");
+  const [modifiedContent, setModifiedContent] = useState<string>("");
+  const [showContent, setShowContent] = useState<boolean>(false);
+  const [contentFormat, setContentFormat] = useState<"markdown" | "html">(
+    "html"
+  );
 
-  // useEffect(() => {
-  //   if (editor) {
-  //     editor.update(
-  //       () => {
-  //         $convertFromMarkdownString(sampleMarkdown, TRANSFORMERS);
-  //       },
-  //       {
-  //         tag: "historic",
-  //         discrete: true,
-  //       }
-  //     );
-  //   }
-  // }, [editor]);
+  // Hàm cập nhật nội dung
+  const updateContent = useCallback(() => {
+    if (!editor) return;
 
-  const highlightText = (words: string[]) => {
+    if (contentFormat === "html") {
+      getHtmlContent(editor).then((htmlContent) => {
+        setModifiedContent(htmlContent);
+      });
+    } else {
+      editor.update(() => {
+        const mdContent = $convertToMarkdownString(TRANSFORMERS);
+        setModifiedContent(mdContent);
+      });
+    }
+  }, [editor, contentFormat]);
+
+  // Theo dõi các thay đổi trong editor
+  useEffect(() => {
+    if (editor) {
+      // Lưu nội dung ban đầu
+      if (contentFormat === "html") {
+        getHtmlContent(editor).then((htmlContent) => {
+          setInitialContent(htmlContent);
+          setModifiedContent(htmlContent);
+        });
+      } else {
+        editor.update(() => {
+          const content = $convertToMarkdownString(TRANSFORMERS);
+          setInitialContent(content);
+          setModifiedContent(content);
+        });
+      }
+
+      // Đăng ký theo dõi sự thay đổi
+      const removeUpdateListener = editor.registerUpdateListener(
+        ({ editorState }) => {
+          editorState.read(() => {
+            updateContent();
+          });
+        }
+      );
+
+      // Hủy đăng ký khi component unmount
+      return () => {
+        removeUpdateListener();
+      };
+    }
+  }, [editor, contentFormat, updateContent]);
+
+  const highlightText = async (words: string[]) => {
     if (!editor) return;
 
     // Biến để theo dõi node highlight cuối cùng
@@ -414,7 +467,7 @@ export default function App() {
     );
   };
 
-  const replaceText = (searchTexts: string[], replaceTexts: string[]) => {
+  const replaceText = async (searchTexts: string[], replaceTexts: string[]) => {
     if (!editor || searchTexts.length !== replaceTexts.length) return;
 
     // Biến để theo dõi node highlight cuối cùng
@@ -426,7 +479,7 @@ export default function App() {
 
         // Xóa tất cả các highlight hiện tại trước tiên
         const removeExistingHighlights = (node: LexicalNode) => {
-          if ($isMarkNode(node) && (node.getIDs().includes("highlight"))) {
+          if ($isMarkNode(node) && node.getIDs().includes("highlight")) {
             // Lấy nội dung của MarkNode
             const text = node.getTextContent();
             // Tạo TextNode mới không có highlight
@@ -472,14 +525,14 @@ export default function App() {
             const searchText = searchTexts[i];
             const replaceText = replaceTexts[i];
             const regex = new RegExp(`\\b${searchText}\\b`, "gi");
-            
+
             // Nếu text chứa từ cần tìm
             if (regex.test(text)) {
               hasChanges = true;
-              
+
               // Reset regex để sử dụng lại từ đầu
               regex.lastIndex = 0;
-              
+
               // Biến tạm để xây dựng text mới
               let tempText = text;
               let tempLastIndex = 0;
@@ -492,17 +545,23 @@ export default function App() {
 
                 // Thêm text trước match
                 if (start > tempLastIndex) {
-                  tempNewNodes.push($createTextNode(tempText.slice(tempLastIndex, start)));
+                  tempNewNodes.push(
+                    $createTextNode(tempText.slice(tempLastIndex, start))
+                  );
                 }
 
                 // Tạo node cho text đã thay đổi
                 const replacedNode = $createTextNode(replaceText);
-                
+
                 // Áp dụng style với màu xanh
-                replacedNode.setStyle("color: #0000FF; background-color: transparent; font-weight: bold;");
+                replacedNode.setStyle(
+                  "color: #0000FF; background-color: transparent; font-weight: bold;"
+                );
 
                 // Tạo MarkNode với ID "replaced" và bọc TextNode
-                const markNode = $createMarkNode(["replaced"]).setStyle("background-color: red;");
+                const markNode = $createMarkNode(["replaced"]).setStyle(
+                  "background-color: red;"
+                );
                 markNode.append(replacedNode);
 
                 // Thêm vào mảng node
@@ -516,7 +575,9 @@ export default function App() {
 
               // Thêm text còn lại
               if (tempLastIndex < tempText.length) {
-                tempNewNodes.push($createTextNode(tempText.slice(tempLastIndex)));
+                tempNewNodes.push(
+                  $createTextNode(tempText.slice(tempLastIndex))
+                );
               }
 
               // Cập nhật text và nodes
@@ -553,10 +614,25 @@ export default function App() {
     );
   };
 
+  // Function to download content as a file
+  const downloadContent = (content: string, filename: string) => {
+    const fileType = contentFormat === "html" ? "text/html" : "text/markdown";
+    const extension = contentFormat === "html" ? ".html" : ".md";
+    const blob = new Blob([content], { type: fileType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename + extension;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       <h1 style={{ textAlign: "center", margin: "20px 0" }}>
-        Lexical Markdown Editor
+        Trình soạn thảo Lexical
       </h1>
       <LexicalComposer
         initialConfig={{
@@ -612,27 +688,74 @@ export default function App() {
         }}
       >
         <button onClick={() => setState(!state)}>
-          {state ? "Tree View" : "Rich Text"}
+          {state ? "Xem cấu trúc" : "Xem văn bản"}
         </button>
 
         <button onClick={() => highlightText(["JavaScript"])}>
-          Highlight JavaScript
+          Tô sáng JavaScript
         </button>
         <button onClick={() => highlightText(["Technical Writing"])}>
-          Highlight Technical Writing
+          Tô sáng Technical Writing
         </button>
 
         <button onClick={() => replaceText(["JavaScript"], ["TypeScript"])}>
-          Change JavaScript to TypeScript
+          Đổi JavaScript thành TypeScript
         </button>
-        <button onClick={() => replaceText(["Technical Writing"], ["Technically"])}>
-          Change Technical Writing to Technically
+        <button
+          onClick={() => replaceText(["Technical Writing"], ["Technically"])}
+        >
+          Đổi Technical Writing thành Technically
         </button>
 
-        <button onClick={() => replaceText(["Technical Writing", "JavaScript"], ["Technically", "TypeScript"])}>
-          Change all
+        <button
+          onClick={() =>
+            replaceText(
+              ["Technical Writing", "JavaScript"],
+              ["Technically", "TypeScript"]
+            )
+          }
+        >
+          Đổi tất cả
         </button>
       </div>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: "10px",
+          margin: "10px 0",
+        }}
+      >
+        <button onClick={() => setShowContent(!showContent)}>
+          {showContent ? "Ẩn Nội Dung" : "Hiển Thị Nội Dung"}
+        </button>
+
+        <button
+          onClick={() => downloadContent(initialContent, "noi-dung-ban-dau")}
+        >
+          Tải Nội Dung Ban Đầu
+        </button>
+        <button
+          onClick={() => downloadContent(modifiedContent, "noi-dung-da-sua")}
+        >
+          Tải Nội Dung Hiện Tại
+        </button>
+
+        <button
+          onClick={() =>
+            setContentFormat(contentFormat === "html" ? "markdown" : "html")
+          }
+        >
+          Chuyển sang {contentFormat === "html" ? "Markdown" : "HTML"}
+        </button>
+      </div>
+      {showContent && (
+        <RichTextDiffViewer
+          oldHtml={initialContent}
+          newHtml={modifiedContent}
+        />
+      )}
     </>
   );
 }

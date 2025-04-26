@@ -11,11 +11,18 @@
   },
   "dependencies": {
     "@lexical/react": "0.30.0",
+    "diff": "^7.0.0",
+    "diff-match-patch": "^1.0.5",
+    "htmldiff": "^0.0.4",
+    "htmldiff-js": "^1.0.5",
+    "jsdiff": "^1.1.1",
     "lexical": "0.30.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/react": "^18.2.59",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",
